@@ -58,6 +58,7 @@ function(add_bin_eap TARGET SOURCES)
     target_compile_options(${TARGET} PRIVATE -marm -mcpu=cortex-a7)
 endfunction()
 
+add_bin_emc(emc_dled_hook emc_dled_hook.cpp)
 add_bin_emc(emc_cmd_handler emc_cmd_handler.cpp)
 
 add_bin_efc(efc_thunk efc_thunk.S)

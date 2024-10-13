@@ -585,6 +585,43 @@ class Ucmd:
         #  a0tcm:00008454 CheckSramAddr
         #  dram.text.cpu0:404DB2C9 NvmeCmd_Vsc_92_95_SramReadWrite
 
+    def load_eap(self):
+        eap_uart_shell = load_bin("eap_uart_shell")
+        emc_dled_hook = load_bin("emc_dled_hook")
+        # emc_dled_hook_wdt = load_bin('emc_dled_hook_wdt')
+
+        self.unlock()
+        self.install_custom_cmd()
+
+        # dled_set
+        self.emc_write(0x121988, emc_dled_hook)
+        # wdt_deliver
+        # self.emc_write(0x123F9C, emc_dled_hook_wdt)
+
+        # ignore wdt_start request from eap_kbl
+        self.emc_write(0x123FCA, bytes.fromhex("00bf00bf"))
+
+        self.pg2_on()
+        self.efc_on()
+
+        # dummy fw load + map to expose ddr4 over pcie
+        self.load_fw(FW_WIFI, 1, 0x1000000)
+        self.setup_bar(0, 0, 0)
+
+        # place shell in location that will persist across kernel load
+        self.ddr_write(0x18000000, eap_uart_shell)
+
+        # A344 caches_clean_invalidate_all
+
+        # disable mmu + caches, clean/invalidate caches, jump to shell
+        self.ddr_write(
+            0x18800000,
+            struct.pack("<2I", 0x58800000 + 4 * 2 + 0x1C, 0x0000D274)
+            + struct.pack("<9I", 4, 0xB0AC, 0xC50078, 7, 8, 9, 10, 0x58800000 + 4 * (2 + 9 * 1) + 0x1C, 0x0000D274)
+            + struct.pack("<9I", 4, 0xA344, 6, 7, 8, 9, 10, 0x58800000 + 4 * (2 + 9 * 2) + 0x1C, 0x0000D274)
+            + struct.pack("<9I", 4, 0x58000000, 6, 7, 8, 9, 10, 0x58800000 + 4 * (2 + 9 * 3) + 0x1C, 0x0000D274),
+        )
+
         # run eap_kbl
         self.efc_off()
         self.eap_on()
@@ -763,6 +800,7 @@ if __name__ == "__main__":
     exit()
     emc = Ucmd()
     emc.screset()
+    emc.load_eap()
     exit()
     if "emc" in sys.argv:
         emc_hax()
