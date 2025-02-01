@@ -1,4 +1,5 @@
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <format>
 #include <list>
@@ -121,7 +122,7 @@ struct Buffer {
   constexpr bool empty() const { return rpos == wpos; }
   bool read_line(std::string* line) {
     // purposefully done before masking irqs...should be fine?
-    // TODO reports of this this breaking exploit (on clang...)
+    std::atomic_signal_fence(std::memory_order_acquire);
     if (!num_newlines || empty()) {
       return false;
     }
