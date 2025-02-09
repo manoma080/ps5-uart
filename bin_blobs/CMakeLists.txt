@@ -62,6 +62,7 @@ add_bin_emc(emc_dled_hook emc_dled_hook.cpp)
 add_bin_emc(emc_cmd_handler emc_cmd_handler.cpp)
 
 add_bin_efc(efc_thunk efc_thunk.S)
+add_bin_efc(efc_stcm_counter efc_stcm_counter.cpp)
 
 add_bin_efc(efc_uart_shell uart_shell.cpp uart_shell.ld)
 add_bin_eap(eap_uart_shell uart_shell.cpp uart_shell.ld)

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -68,34 +69,42 @@ enum StatusCode : u32 {
   kSetPayloadPuareq2Failed,
   kExploitVersionUnexpected,
   kExploitFailedEmcReset,
+  kChipConstsInvalid,
+  // For rom frames
+  kRomFrame,
 };
 
 struct FwConstants {
   u32 ucmd_ua_buf_addr{};
-  u32 cmd_name_addr{};
   std::vector<u8> shellcode;
 };
 
 static std::map<std::string, FwConstants> fw_constants_map{
     // 1.0.4 E r5072
     {"E1E 0001 0000 0004 13D0",
-     {0x1762E8, 0x15C927, {0X00, 0XB5, 0X47, 0XF2, 0X00, 0X60, 0XC0, 0XF2, 0X15,
-                           0X00, 0X43, 0XF6, 0XE0, 0X71, 0XC0, 0XF2, 0X17, 0X01,
-                           0X08, 0X60, 0X01, 0X20, 0X45, 0XF2, 0X24, 0X71, 0XC0,
-                           0XF2, 0X17, 0X01, 0X08, 0X60, 0X40, 0XF6, 0X95, 0X71,
-                           0XC0, 0XF2, 0X12, 0X01, 0X88, 0X47, 0X00, 0XBD}}},
+     {0x1762e8,
+      {0x00, 0xb5, 0x47, 0xf2, 0x00, 0x60, 0xc0, 0xf2, 0x15, 0x00, 0x43,
+       0xf6, 0xe0, 0x71, 0xc0, 0xf2, 0x17, 0x01, 0x08, 0x60, 0x01, 0x20,
+       0x45, 0xf2, 0x24, 0x71, 0xc0, 0xf2, 0x17, 0x01, 0x08, 0x60, 0x40,
+       0xf6, 0x95, 0x71, 0xc0, 0xf2, 0x12, 0x01, 0x88, 0x47, 0x00, 0xbd}}},
     {"E1E 0001 0002 0003 1580",
-     {0x17DE38, 0x15F797, {0X00, 0XB5, 0X4A, 0XF2, 0X30, 0X30, 0XC0, 0XF2, 0X15,
-                           0X00, 0X4A, 0XF2, 0XEC, 0X61, 0XC0, 0XF2, 0X17, 0X01,
-                           0X08, 0X60, 0X01, 0X20, 0X4D, 0XF2, 0X40, 0X21, 0XC0,
-                           0XF2, 0X17, 0X01, 0X08, 0X60, 0X42, 0XF6, 0X31, 0X01,
-                           0XC0, 0XF2, 0X12, 0X01, 0X88, 0X47, 0X00, 0XBD}}},
+     {0x17de38,
+      {0x00, 0xb5, 0x4a, 0xf2, 0x30, 0x30, 0xc0, 0xf2, 0x15, 0x00, 0x4a,
+       0xf2, 0xec, 0x61, 0xc0, 0xf2, 0x17, 0x01, 0x08, 0x60, 0x01, 0x20,
+       0x4d, 0xf2, 0x40, 0x21, 0xc0, 0xf2, 0x17, 0x01, 0x08, 0x60, 0x42,
+       0xf6, 0x31, 0x01, 0xc0, 0xf2, 0x12, 0x01, 0x88, 0x47, 0x00, 0xbd}}},
     {"E1E 0001 0004 0002 1752",
-     {0x184D9C, 0x162827, {0x00, 0xB5, 0x4D, 0xF2, 0x7C, 0x30, 0xC0, 0xF2, 0x15,
-                           0x00, 0x41, 0xF2, 0xC0, 0x11, 0xC0, 0xF2, 0x18, 0x01,
-                           0x08, 0x60, 0x01, 0x20, 0x43, 0xF6, 0x14, 0x71, 0xC0,
-                           0xF2, 0x18, 0x01, 0x08, 0x60, 0x44, 0xF2, 0x09, 0x31,
-                           0xC0, 0xF2, 0x12, 0x01, 0x88, 0x47, 0x00, 0xBD}}},
+     {0x184d9c,
+      {0x00, 0xb5, 0x4d, 0xf2, 0x7c, 0x30, 0xc0, 0xf2, 0x15, 0x00, 0x41,
+       0xf2, 0xc0, 0x11, 0xc0, 0xf2, 0x18, 0x01, 0x08, 0x60, 0x01, 0x20,
+       0x43, 0xf6, 0x14, 0x71, 0xc0, 0xf2, 0x18, 0x01, 0x08, 0x60, 0x44,
+       0xf2, 0x09, 0x31, 0xc0, 0xf2, 0x12, 0x01, 0x88, 0x47, 0x00, 0xbd}}},
+    {"E1E 0001 0008 0002 1B03",
+     {0x19261c,
+      {0x00, 0xb5, 0x45, 0xf6, 0xe8, 0x20, 0xc0, 0xf2, 0x16, 0x00, 0x4e,
+       0xf2, 0x90, 0x21, 0xc0, 0xf2, 0x18, 0x01, 0x08, 0x60, 0x01, 0x20,
+       0x41, 0xf2, 0x30, 0x71, 0xc0, 0xf2, 0x19, 0x01, 0x08, 0x60, 0x47,
+       0xf6, 0xbd, 0x11, 0xc0, 0xf2, 0x12, 0x01, 0x88, 0x47, 0x00, 0xbd}}},
 };
 
 struct ScopedIrqDisable {
@@ -121,8 +130,10 @@ struct Buffer {
   }
   constexpr bool empty() const { return rpos == wpos; }
   bool read_line(std::string* line) {
-    // purposefully done before masking irqs...should be fine?
+    // aggressively inlining compilers could wind up making this an empty delay
+    // loop if num_newlines==0 on entry. This barrier prevents that.
     std::atomic_signal_fence(std::memory_order_acquire);
+    // purposefully done before masking irqs as a speed hack
     if (!num_newlines || empty()) {
       return false;
     }
@@ -169,7 +180,7 @@ struct Buffer {
     } while (time_us_32() - start < timeout_us);
     return false;
   }
-  void read_buf(u8* buf, size_t len) {
+  size_t read_buf(u8* buf, size_t len) {
     ScopedIrqDisable irq_disable;
     const auto avail = read_available();
     len = std::min(len, avail);
@@ -181,6 +192,7 @@ struct Buffer {
       *buf++ = c;
       rpos = add(rpos, 1);
     }
+    return len;
   }
   // called from irq. cannot do allocs, etc.
   void push(u8 b) {
@@ -212,21 +224,27 @@ struct Buffer {
 };
 using Buffer1k = Buffer<1024>;
 
-struct EmcResetGpio {
+struct ActiveLowGpio {
   void init(uint gpio) {
     gpio_ = gpio;
     gpio_init(gpio_);
   }
-  void drive(bool value, u32 length_us) const {
-    gpio_put(gpio_, value);
+  void set_low() const {
+    gpio_put(gpio_, 0);
     gpio_set_dir(gpio_, GPIO_OUT);
-    busy_wait_us(length_us);
-    gpio_set_dir(gpio_, GPIO_IN);
   }
+  void release() const { gpio_set_dir(gpio_, GPIO_IN); }
   bool sample() const { return gpio_get(gpio_); }
-  void reset() const { drive(0, 100); }
-  bool is_reset() const { return sample() == false; }
   uint gpio_{};
+};
+
+struct EmcResetGpio : ActiveLowGpio {
+  void reset() const {
+    set_low();
+    busy_wait_us(100);
+    release();
+  }
+  bool is_reset() const { return sample() == false; }
 };
 
 struct UcmdClientEmc {
@@ -235,7 +253,8 @@ struct UcmdClientEmc {
     if (!uart_.init(0, 115200, rx_handler)) {
       return false;
     }
-    reset_.init(2);
+    rom_gpio_.init(2);
+    reset_.init(3);
     return true;
   }
 
@@ -267,12 +286,23 @@ struct UcmdClientEmc {
   void cdc_process(u8 itf, u32 max_time_us = 1'000) {
     const u32 start = time_us_32();
     do {
-      std::string line;
-      if (!uart_rx_.read_line(&line)) {
-        break;
+      if (!in_rom_) {
+        std::string line;
+        if (!uart_rx_.read_line(&line)) {
+          break;
+        }
+        dbg_println(std::format("host<{}", line));
+        cdc_write(itf, Result::from_str(line).to_usb_response());
+      } else {
+        std::vector<u8> buf(0x100);
+        const auto num_read = uart_rx_.read_buf(buf.data(), buf.size());
+        buf.resize(num_read);
+        if (buf.size()) {
+          dbg_println(std::format("host<{}", buf2hex(buf)));
+          cdc_write(itf, Result::new_ok(StatusCode::kRomFrame, buf2hex(buf))
+                             .to_usb_response());
+        }
       }
-      dbg_println(std::format("host<{}", line));
-      cdc_write(itf, Result::from_str(line).to_usb_response());
     } while (time_us_32() - start < max_time_us);
   }
 
@@ -481,7 +511,7 @@ struct UcmdClientEmc {
   }
 
   Result resolve_constants() {
-    if (fw_consts_valid) {
+    if (fw_consts_valid_) {
       return Result::new_success();
     }
     auto result = version();
@@ -494,8 +524,8 @@ struct UcmdClientEmc {
     if (fw_consts_it == fw_constants_map.end()) {
       return Result::new_ng(StatusCode::kFwConstsVersionUnknown, version_str);
     }
-    fw_consts = fw_consts_it->second;
-    fw_consts_valid = true;
+    fw_consts_ = fw_consts_it->second;
+    fw_consts_valid_ = true;
     return Result::new_success();
   }
 
@@ -532,19 +562,24 @@ struct UcmdClientEmc {
     // last chunk)
     constexpr size_t payload_max_len = 350;
 
-    // must have empty trailing entry
-    constexpr size_t num_cmd_entries = 2;
     struct cmd_entry_t {
-      u32 name;
-      u32 func;
-      u32 mask;
-    } const cmd_entries[num_cmd_entries] = {{
-        fw_consts.cmd_name_addr,                                 // "noName"
-        (fw_consts.ucmd_ua_buf_addr + sizeof(cmd_entries)) | 1,  // shellcode
-        0xffffffff                                               // mask
-    }};
+      u32 name{};
+      u32 func{};
+      u32 mask{};
+    };
+    const u32 payload_addr = fw_consts_.ucmd_ua_buf_addr;
+    struct payload_t {
+      // must have empty trailing entry
+      cmd_entry_t entries[2];
+      char cmd_name[sizeof(hax_cmd_name_)]{};
+      alignas(4) u8 shellcode[0];
+    } payload_prefix{
+        .entries{{payload_addr + offsetof(payload_t, cmd_name),
+                  (payload_addr + offsetof(payload_t, shellcode)) | 1, 0xf}}};
+    strcpy(payload_prefix.cmd_name, hax_cmd_name_);
 
-    const size_t payload_len = sizeof(cmd_entries) + fw_consts.shellcode.size();
+    const size_t payload_len =
+        sizeof(payload_prefix) + fw_consts_.shellcode.size();
     if (payload_len > payload_max_len) {
       return Result::new_ng(StatusCode::kSetPayloadTooLarge);
     }
@@ -552,9 +587,9 @@ struct UcmdClientEmc {
     std::vector<u8> payload;
     // size must be multiple of 50
     payload.resize(align_up(payload_len, 50));
-    std::memcpy(&payload[0], cmd_entries, sizeof(cmd_entries));
-    std::memcpy(&payload[sizeof(cmd_entries)], &fw_consts.shellcode[0],
-                fw_consts.shellcode.size());
+    std::memcpy(&payload[0], &payload_prefix, sizeof(payload_prefix));
+    std::memcpy(&payload[sizeof(payload_prefix)], &fw_consts_.shellcode[0],
+                fw_consts_.shellcode.size());
 
     return set_payload(payload);
   }
@@ -581,8 +616,8 @@ struct UcmdClientEmc {
 
     // pad the rx statemachine to the end
     std::string output, output2;
-    u32 len = 160 * 3;
-    char lut[] =
+    const u32 len = 160 * chip_consts_.filler_multiplier;
+    const char lut[] =
         "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     for (u32 i = 0; i < len; i += 1) {
       output.push_back(lut[i % (sizeof(lut) - 1)]);
@@ -608,19 +643,19 @@ struct UcmdClientEmc {
     write_str_blocking(output);
 
     // The important timer to tweak
-    busy_wait_us(pwn_delay_us_);
+    busy_wait_us(chip_consts_.pwn_delay_us);
 
     write_str_blocking(output2);
 
     // give some time for emc to process
-    busy_wait_ms(200);
+    busy_wait_ms(chip_consts_.post_process_ms);
     // emc will also spew kRxInputTooLong errors, so need to discard all that
     // before continuing.
     uart_rx_.clear();
   }
 
   bool overwrite_cmd_table_ptr() {
-    const u32 write_val = fw_consts.ucmd_ua_buf_addr;
+    const u32 write_val = fw_consts_.ucmd_ua_buf_addr;
     std::array<u8, sizeof(write_val)> target;
     for (size_t i = 0; i < target.size(); i++) {
       const u8 b = (write_val >> (i * 8)) & 0xff;
@@ -646,7 +681,7 @@ struct UcmdClientEmc {
     return true;
   }
 
-  Result exploit() {
+  Result exploit_setup() {
     // This only needs to be done once (result cached)
     auto result = resolve_constants();
     if (!result.is_success()) {
@@ -662,11 +697,14 @@ struct UcmdClientEmc {
     if (!overwrite_cmd_table_ptr()) {
       return Result::new_ng(StatusCode::kFwConstsInvalid);
     }
+    return Result::new_success();
+  }
 
+  Result exploit_trigger() {
     // If cmd table ptr was modified, version will no longer be valid cmd
     // NOTE emc could crash here if ptr was incorrectly overwritten
     nak();
-    result = version();
+    auto result = version();
     if (!result.is_ng_status(StatusCode::kUcmdUnknownCmd)) {
       return Result::new_ng(StatusCode::kExploitVersionUnexpected,
                             result.format());
@@ -676,7 +714,7 @@ struct UcmdClientEmc {
     // the shellcode isn't expected to send a response
     // technically should insert respone to ensure it has executed, but in
     // practice hasn't been a problem.
-    cmd_send("noName");
+    cmd_send(hax_cmd_name_);
 
     return is_unlocked();
   }
@@ -695,7 +733,12 @@ struct UcmdClientEmc {
       return Result::new_success();
     }
 
-    result = exploit();
+    result = exploit_setup();
+    if (result.is_ng()) {
+      return result;
+    }
+
+    result = exploit_trigger();
     if (result.is_success()) {
       return Result::new_success();
     }
@@ -714,56 +757,207 @@ struct UcmdClientEmc {
     return Result::new_ng(StatusCode::kExploitFailedEmcReset);
   }
 
+  struct ChipConsts {
+    // A bit more explanation of this:
+    // The idea isn't that the chip processes all of the filler data we're
+    // sending (we assume it will drop some bytes because it recieves them too
+    // quickly). But, by sending enough bytes, we can be sure the ucmd rx buffer
+    // is full, even if the uart ringbuffer in irq handler was dropping bytes.
+    u32 filler_multiplier{};
+    // Could probably just use the maximum required across chip versions here;
+    // decreasing the time is only in interest of speed.
+    u32 post_process_ms{};
+    // This delay ensures the overflown bytes will make it into both buffers,
+    // and be processed within the same invocation of the ucmd line buffer
+    // parser.
+    u64 pwn_delay_us{};
+  };
+  static constexpr ChipConsts salina_consts_{.filler_multiplier = 3,
+                                             .post_process_ms = 200,
+                                             .pwn_delay_us = 790};
+  static constexpr ChipConsts salina2_consts_{.filler_multiplier = 6,
+                                              .post_process_ms = 800,
+                                              .pwn_delay_us = 900};
+
+  Result set_chip_consts(const std::string& cmd) {
+    const auto ng = Result::new_ng(StatusCode::kChipConstsInvalid);
+    const auto success = Result::new_success();
+
+    const auto parts = split_string(cmd, ' ');
+    const auto num_parts = parts.size();
+    if (num_parts == 2) {
+      auto chip = parts[1];
+      if (chip == "salina") {
+        chip_consts_ = salina_consts_;
+        return success;
+      } else if (chip == "salina2") {
+        chip_consts_ = salina2_consts_;
+        return success;
+      }
+      return ng;
+    } else if (num_parts == 4) {
+      const auto filler_multiplier = int_from_hex<u8>(parts[1]);
+      const auto post_process_ms = int_from_hex<u16>(parts[2]);
+      const auto pwn_delay_us = int_from_hex<u16>(parts[3]);
+      if (!filler_multiplier || !post_process_ms || !pwn_delay_us) {
+        return ng;
+      }
+      chip_consts_ = {.filler_multiplier = *filler_multiplier,
+                      .post_process_ms = *post_process_ms,
+                      .pwn_delay_us = *pwn_delay_us};
+      return success;
+    }
+    return ng;
+  }
+
+  Result set_fw_consts(const std::string& cmd) {
+    const auto ng = Result::new_ng(StatusCode::kFwConstsInvalid);
+    const auto parts = split_string(cmd, ' ');
+    if (parts.size() != 4) {
+      return ng;
+    }
+    auto version = parts[1];
+    std::replace_if(
+        version.begin(), version.end(), [](auto c) { return c == '.'; }, ' ');
+    const auto buf_addr = int_from_hex<u32>(parts[2]);
+    std::vector<u8> shellcode;
+    if (!buf_addr.has_value() || !hex2buf(parts[3], &shellcode)) {
+      return ng;
+    }
+    fw_constants_map.insert_or_assign(version,
+                                      FwConstants{
+                                          .ucmd_ua_buf_addr = buf_addr.value(),
+                                          .shellcode = shellcode,
+                                      });
+    fw_consts_valid_ = false;
+    fw_consts_ = {};
+    return Result::new_success();
+  }
+
+  Result rom_enter_exit(const std::string& cmd) {
+    const auto ng = Result::new_ng(StatusCode::kUcmdUnknownCmd);
+    const auto parts = split_string(cmd, ' ');
+    if (parts.size() != 2) {
+      return ng;
+    }
+    const auto mode = parts[1];
+    if (mode == "enter") {
+      reset_.set_low();
+      const auto reset_release = make_timeout_time_us(100);
+      rom_gpio_.set_low();
+
+      uart_.set_baudrate(460800);
+      uart_rx_.clear();
+
+      busy_wait_until(reset_release);
+      in_rom_ = true;
+      reset_.release();
+
+      return Result::new_success();
+    } else if (mode == "exit") {
+      reset_.set_low();
+      const auto reset_release = make_timeout_time_us(100);
+      rom_gpio_.release();
+
+      uart_.set_baudrate(115200);
+      uart_rx_.clear();
+
+      busy_wait_until(reset_release);
+      in_rom_ = false;
+      reset_.release();
+
+      return Result::new_success();
+    }
+    return ng;
+  }
+
+  enum CommandType {
+    kUnlock,
+    kPicoReset,
+    kEmcReset,
+    kEmcRom,
+    kSetFwConsts,
+    kSetChipConsts,
+    kPassthroughUcmd,
+    kPassthroughRom,
+  };
+
+  CommandType parse_command_type(std::string_view cmd) {
+    if (cmd.starts_with("unlock")) {
+      return CommandType::kUnlock;
+    } else if (cmd.starts_with("picoreset")) {
+      return CommandType::kPicoReset;
+    } else if (cmd.starts_with("picoemcreset")) {
+      return CommandType::kEmcReset;
+    } else if (cmd.starts_with("picoemcrom")) {
+      return CommandType::kEmcRom;
+    } else if (cmd.starts_with("picofwconst")) {
+      return CommandType::kSetFwConsts;
+    } else if (cmd.starts_with("picochipconst")) {
+      return CommandType::kSetChipConsts;
+    } else if (in_rom_) {
+      return CommandType::kPassthroughRom;
+    } else {
+      return CommandType::kPassthroughUcmd;
+    }
+  }
+
   void process_cmd(u8 itf, const std::string& cmd) {
     dbg_println(std::format("host>{}", cmd));
-    if (cmd == "unlock") {
+    const auto cmd_type = parse_command_type(cmd);
+    if (cmd_type == CommandType::kPassthroughUcmd) {
+      // post cmd only - no wait
+      cmd_send(cmd, false);
+    } else if (cmd_type == CommandType::kPassthroughRom) {
+      // note we can't have "true" passthrough because we're still line buffered
+      // we used hex encoding to avoid escaping \n
+      std::vector<u8> buf;
+      if (hex2buf(cmd, &buf)) {
+        uart_.write_blocking(buf.data(), buf.size(), false);
+      }
+    } else {
       // echo
       cdc_write(itf, Result::new_unknown(cmd).to_usb_response());
 
-      // autorun takes ~750ms
-      auto result = autorun();
+      auto result = Result::new_success();
+      switch (cmd_type) {
+      case CommandType::kUnlock:
+        // autorun takes ~750ms
+        result = autorun();
+        break;
+      case CommandType::kPicoReset:
+        reset_usb_boot(0, 0);
+        __builtin_unreachable();
+        break;
+      case CommandType::kEmcReset:
+        reset_.reset();
+        break;
+      case CommandType::kEmcRom:
+        result = rom_enter_exit(cmd);
+        break;
+      case CommandType::kSetFwConsts:
+        result = set_fw_consts(cmd);
+        break;
+      case CommandType::kSetChipConsts:
+        result = set_chip_consts(cmd);
+        break;
+      default:
+        result = Result::new_ng(StatusCode::kUcmdUnknownCmd);
+        break;
+      }
       cdc_write(itf, result.to_usb_response());
-      return;
-    } else if (cmd == "picoreset") {
-      reset_usb_boot(0, 0);
-      __builtin_unreachable();
-    } else if (cmd == "picofwconst") {
-      const auto ng = Result::new_ng(StatusCode::kFwConstsInvalid);
-      const auto parts = split_string(cmd, '\0');
-      if (parts.size() != 4) {
-        cdc_write(itf, ng.to_usb_response());
-        return;
-      }
-      const auto version = parts[0];
-      const auto buf_addr = int_from_hex<u32>(parts[1], 0);
-      const auto name_addr = int_from_hex<u32>(parts[2], 0);
-      std::vector<u8> shellcode;
-      if (!buf_addr.has_value() || !name_addr.has_value() ||
-          !hex2buf(parts[3], &shellcode)) {
-        cdc_write(itf, ng.to_usb_response());
-        return;
-      }
-      fw_constants_map.insert_or_assign(
-          version, FwConstants{
-                       .ucmd_ua_buf_addr = buf_addr.value(),
-                       .cmd_name_addr = name_addr.value(),
-                       .shellcode = shellcode,
-                   });
-      cdc_write(itf, Result::new_success().to_usb_response());
-      return;
-    } else {
-      // post cmd only - no wait
-      cmd_send(cmd, false);
-      return;
     }
   }
 
   Uart uart_;
   static Buffer1k uart_rx_;
-  bool fw_consts_valid{};
-  FwConstants fw_consts;
-  u32 pwn_delay_us_{790};
+  ChipConsts chip_consts_{salina_consts_};
+  bool fw_consts_valid_{};
+  FwConstants fw_consts_;
+  static constexpr const char hax_cmd_name_[] = "A";
   EmcResetGpio reset_;
+  ActiveLowGpio rom_gpio_;
+  bool in_rom_{};
 };
 Buffer1k UcmdClientEmc::uart_rx_;
 

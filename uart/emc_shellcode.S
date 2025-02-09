@@ -20,11 +20,18 @@
 //.equ hcmd_log_flag, 0x17D240
 
 // E1E 0001 0004 0002 1752
-.equ shellcode_addr, 0x184D9C + 0xc * 2
-.equ auth_status_set, 0x124308|1
-.equ ucmd_cmds_0, 0x15D37C
-.equ ucmd_iface_0_cmd_table, 0x181148 + 0x78
-.equ hcmd_log_flag, 0x183F14
+//.equ shellcode_addr, 0x184D9C + 0xc * 2
+//.equ auth_status_set, 0x124308|1
+//.equ ucmd_cmds_0, 0x15D37C
+//.equ ucmd_iface_0_cmd_table, 0x181148 + 0x78
+//.equ hcmd_log_flag, 0x183F14
+
+// E1E 0001 0008 0002 1B03
+//.equ shellcode_addr, 0x19261C + 0xc * 2
+.equ auth_status_set, 0x1279BC|1
+.equ ucmd_cmds_0, 0x165AE8
+.equ ucmd_iface_0_cmd_table, 0x18E218 + 0x78
+.equ hcmd_log_flag, 0x191730
 
 @.org shellcode_addr
 

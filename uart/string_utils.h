@@ -79,7 +79,7 @@ std::string string_from_hex(std::string_view hex) {
 }
 
 template <typename T>
-std::optional<T> int_from_hex(std::string_view str, size_t offset) {
+std::optional<T> int_from_hex(std::string_view str, size_t offset = 0) {
   T val;
   if (std::from_chars(&str[offset], &str[str.size()], val, 16).ec !=
       std::errc{}) {

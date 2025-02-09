@@ -268,3 +268,31 @@ class Efc:
 
     def nand_close(self):
         self._open_close_nand_access(1)
+
+    def bcm_cmd(self, cmd, *args):
+        BCM_BASE = 0x19000000
+        for i, arg in enumerate(args):
+            self.mem_write32(BCM_BASE + i * 4, arg)
+        # for i in range(len(args), 16): self.mem_write32(BCM_BASE + i * 4, 0)
+        self.mem_write32(BCM_BASE + 0x40, cmd)
+        # b0 should be set
+        # self.mem_read32(BCM_BASE + 0xc8)
+
+        # for i in range(1, 0x11):
+        #    self.mem_read32(BCM_BASE + 0x80 + i * 4)
+        self.read_mem(BCM_BASE + 0x80, 0x11, 4)
+
+        self.mem_write32(BCM_BASE + 0xC8, 0xFFFFFFFF)
+
+    # NOTE for some reason, bcm can't do dma when booted into efc mode. missing some magic regs pokes or something
+    def bcm_get_version_info(self, dst=0):
+        dst0, dst1 = 0, 0
+        if dst != 0:
+            dst0 = dst
+            dst1 = dst + 0x100
+        self.bcm_cmd(2, dst0, dst1)
+
+    def bcm_exploit(self):
+        src = 0x41000000
+        dst = src + 0x100
+        self.bcm_cmd(56, 1, 1, 0x100 // 4, src, dst)

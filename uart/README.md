@@ -72,7 +72,8 @@ pico        emc header
 1           6
 2           7
 3           4
-4           24
+4           5
+5           24
 11          12
 12          11
 ```
@@ -101,6 +102,10 @@ There are currently the following special cmds:
 |-|-|
 | `unlock` | performs the emc exploit if needed |
 | `picoreset` | resets the pico to flash mode |
+| `picoemcreset` | reset emc via `emc reset#` |
+| `picoemcrom` | reset emc into/out of rom (uart bootloader) mode and configure pico as needed |
+| `picochipconst` | installs constants to use for an emc hw version |
 | `picofwconst` | installs constants/shellcode to use for an emc fw version |
+
 ### titania (second interface)
 This is just raw uart, data is just passed between host and titania bytewise as available.

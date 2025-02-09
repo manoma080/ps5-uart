@@ -26,6 +26,21 @@ def load_bin(name):
     return Path(__file__).parent.joinpath(f"bin/{name}.bin").read_bytes()
 
 
+def xor_buf(a, b):
+    return bytes([x ^ y for x, y in zip(a, b)])
+
+def or_buf(a, b):
+    return bytes([x | y for x, y in zip(a, b)])
+
+"""
+weird crash/hang:
+    sccmd 2 0 (setup bar, port=0, size=0, init_val=0)
+    sccmd 1 2 0 0 (load fw 2, either sram or dram)
+    -> [FER] FcErr_NotifyCb[bit:08]
+       [FER] FcErr_getFw1ErrLog[PSQ] [Read Titania PMIC Register Start]]
+    seems to cause watchdog irq on all efc cores
+"""
+
 FW_EFC_FW0 = 1  # efc_ipl
 FW_EFC_FW1 = 2  # eap_kbl
 FW_PSP_BL = 0x10  # mbr, secldr, kernel
@@ -60,6 +75,9 @@ class StatusCode:
     kSetPayloadPuareq2Failed = 0xDEAD0006
     kExploitVersionUnexpected = 0xDEAD0007
     kExploitFailedEmcReset = 0xDEAD0008
+    kChipConstsInvalid = 0xDEAD0009
+    # For rom frames
+    kRomFrame = 0xDEAD000A
 
 
 class ResultType:
@@ -134,10 +152,10 @@ class PicoFrame:
             return self.response
         return "timeout"
 
-
 class Ucmd:
     def __init__(self):
-        self.port = Serial("COM18", timeout=0.5)
+        self.port = Serial("COM5", timeout=0.5)
+        self.rom_buf = b''
 
     def wait_frame(self, accept_types, **kwargs) -> list[PicoFrame]:
         response = kwargs.get("response")
@@ -167,6 +185,133 @@ class Ucmd:
         self.port.write(bytes(cmdline + "\n", "ascii"))
         self.wait_frame(ResultType.kUnknown, response=cmdline)
         return self.wait_frame((ResultType.kOk, ResultType.kNg), **kwargs)
+
+
+    def _rom_pull_bytes(self):
+        frames = self.wait_frame(ResultType.kOk)
+        if len(frames) == 0:
+            return 0
+        num_read = 0
+        for frame in frames:
+            if not frame.is_ok_status(StatusCode.kRomFrame):
+                continue
+            data = bytes.fromhex(frame.response)
+            num_read += len(data)
+            self.rom_buf += data
+        return num_read
+
+    def rom_read(self, size: int):
+        while len(self.rom_buf) < size:
+            self._rom_pull_bytes()
+        buf = self.rom_buf[:size]
+        self.rom_buf = self.rom_buf[size:]
+        return buf
+
+    def rom_read_discard(self):
+        while self._rom_pull_bytes() != 0:
+            pass
+        self.rom_buf = b''
+
+    def rom_read_until(self, term: bytes):
+        while True:
+            term_pos = self.rom_buf.find(term)
+            if term_pos >= 0:
+                end = term_pos + len(term)
+                rv = self.rom_buf[:end]
+                self.rom_buf = self.rom_buf[end:]
+                return rv
+
+            if self._rom_pull_bytes() == 0:
+                return None
+
+    # info, down, jump
+    def rom_cmd(self, cmd: str):
+        cmd = bytes(cmd + '\n', 'ascii').hex()
+        self.port.write(bytes(cmd + '\n', 'ascii'))
+        self.rom_read_until(b'\n> ')
+
+    def rom_info(self):
+        self.rom_cmd('info')
+        self.rom_read_until(b'\n')
+        return str(self.rom_read_until(b'\n')[:-1], 'ascii')
+
+    # starts xmodem
+    def rom_down(self):
+        self.rom_cmd('down')
+        self.rom_read_until(b'\n')
+        ready = self.rom_read_until(b'\n')
+        assert ready == b'\x15ready\n'
+
+    def rom_send(self, buf: bytes):
+        from xmodem import XMODEM
+        import io
+        def getc(size: int, timeout=1):
+            #print('getc', size)
+            return self.rom_read(size)
+        def putc(data: bytes, timeout=1):
+            #print('putc', data.hex())
+            for i in range(0, len(data), 66):
+                line = data[i:i+66].hex() + '\n'
+                self.port.write(bytes(line, 'ascii'))
+                import time
+                time.sleep(.01)
+        xm = XMODEM(getc, putc)
+        self.rom_read_discard()
+        def debug(total_packets, success_count, error_count):
+            print(f'{total_packets:x} {total_packets*0x80:x}')
+        return xm.send(io.BytesIO(buf), callback=debug)
+
+    def rom_fill_sram(self):
+        self.pico_emc_rom_enter()
+        self.rom_read_discard()
+        self.rom_down()
+        buf = b''
+        for i in range(0, 0xa9e00, 4):
+            buf += (0xcac0_0000 + i).to_bytes(4, 'little')
+        self.rom_send(buf)
+
+        # 7a110:a4200 seems uninit from rom
+        # should be plenty of space to copy rom to 0x80000
+        # expect it to be < 0x8000
+
+        self.pico_emc_rom_exit()
+        buf = self.emc_read(0x100000, 0xAC000)
+        Path('after_rom_sram_fill.bin').write_bytes(buf)
+
+    def rom_dump(self):
+        self.pico_emc_rom_enter()
+        self.rom_read_discard()
+        self.rom_down()
+
+        sector = bytearray(0x200)
+        # point indicator so it overlaps ox
+        sector[0x34:0x38] = int(0).to_bytes(4, 'little')
+        # indicator: choose mbr_offsets[1]
+        sector[0:4] = int(0x80).to_bytes(4, 'little')
+        # ox.mbr_offsets[1] = also overalapped
+        sector[0x28:0x2c] = int(0).to_bytes(4, 'little')
+        # mbr.ipl_end
+        sector[0x24:0x28] = int(0xffffffff).to_bytes(4, 'little')
+        # mbr.ipl_offset
+        sector[0x30:0x34] = int((1<<32)-0x100c00).to_bytes(4, 'little')
+        # mbr.ipl_size
+        sector[0x34:0x38] = int(0x10000).to_bytes(4, 'little')
+
+        self.rom_send(sector)
+        self.rom_jump()
+
+        self.pico_emc_rom_exit()
+        self.wait_frame(ResultType.kInfo, timeout=5)
+        self.unlock()
+        buf = self.emc_read(0x100000, 0xc00)
+        Path('salina_rom_dump.bin').write_bytes(buf)
+
+    def rom_jump(self):
+        # failure inf loops
+        self.rom_cmd('jump')
+        self.rom_read_until(b'\n')
+        rv = int(self.rom_read_until(b'\n')[:-1], 16)
+        return rv
 
     def unlock(self):
         return self.cmd_send_recv("unlock", timeout=2)
@@ -269,7 +414,7 @@ class Ucmd:
     def cmd_state_change(self, cmd):
         self.cmd_send_recv(cmd)
         # this is just an attempt to not flood emc. it is ok if it times out
-        self.wait_frame(ResultType.kInfo)
+        self.wait_frame(ResultType.kInfo, timeout=5)
 
     def pg2_on(self):
         self.cmd_state_change("pg2on")
@@ -293,6 +438,12 @@ class Ucmd:
         self.efc_off()
         self.efc_on()
 
+    def fatal_off(self):
+        return self.cmd_send_recv('pprfoff')
+
+    def fatal_clear(self):
+        return self.cmd_send_recv('pprclrf')
+
     def parse_hexdump(self, frames: list[PicoFrame]):
         rv, lines = frames[-1], frames[:-1]
         if not rv.is_ok():
@@ -305,9 +456,8 @@ class Ucmd:
             if sc_pos < 0:
                 continue
             for word in l.response[sc_pos + 1 :].split():
-                if len(word) != 8:
-                    break
-                data.append(int(word, 16).to_bytes(4, "little"))
+                num_bytes = len(word) // 2
+                data.append(int(word, 16).to_bytes(num_bytes, "little"))
         return b"".join(data)
 
     def fcddr_read(self, addr, size):
@@ -356,8 +506,14 @@ class Ucmd:
     def emc_read(self, addr: int, size: int) -> bytes:
         return self.fcddr_read(self.fcddr_addr_to_emc(addr), size)
 
+    def emc_read32(self, addr: int) -> int:
+        return self.fcddr_read32(self.fcddr_addr_to_emc(addr))
+
     def emc_write(self, addr: int, buf: bytes):
         self.fcddr_write(self.fcddr_addr_to_emc(addr), buf)
+
+    def emc_write32(self, addr: int, val: int):
+        self.fcddr_write32(self.fcddr_addr_to_emc(addr), val)
 
     def emc_or32(self, addr: int, val: int):
         addr = self.fcddr_addr_to_emc(addr)
@@ -369,6 +525,8 @@ class Ucmd:
 
     VMMIO_TITANIA_SPI = 0x700000
     VMMIO_RT5127 = 0x800000
+    VMMIO_STORAGE_INSTANT = 0x10C00000
+    VMMIO_STORAGE = 0x10D00000
 
     def vmmio_r32(self, addr, size):
         return self.parse_hexdump(self.cmd_send_recv(f"r32 {addr:x} {size:x}"))
@@ -385,6 +543,17 @@ class Ucmd:
         elif isinstance(val, int):
             vals = f"{val:02x}"
         return self.parse_hexdump(self.cmd_send_recv(f"w8 {addr:x} {vals}"))
+
+    def storage_r8(self, offset: int, count: int):
+        return self.vmmio_r8(self.VMMIO_STORAGE + offset, count)
+
+    def storage_w8(self, offset: int, data: bytes):
+        return self.vmmio_w8(self.VMMIO_STORAGE + offset, data)
+
+    # value in storage is seperate from, but considered in addition to value set by btdisable ucmd
+    def bt_disable_set(self, disable=True):
+        # set in sflash (not instant) - requires reset to take effect
+        return self.storage_w8(0x9c5, 0 if disable else 0xff)
 
     def titania_pmic_r8(self, reg):
         return self.vmmio_r8(self.VMMIO_RT5127 + reg, 1)
@@ -626,6 +795,53 @@ class Ucmd:
         self.efc_off()
         self.eap_on()
 
+    def read_fw11_mmio_bindings(self):
+        offsets = [0x7404, 0x7408, 0x7420, 0x7424]
+        for offset in offsets:
+            val = self.emc_read32(0x5f000000 + offset)
+            print(f'{offset:8x}: {val:8x}')
+
+    def pico_reset(self):
+        return self.cmd_send_recv('picoreset')
+
+    def pico_emc_reset(self):
+        return self.cmd_state_change('picoemcreset')
+
+    def _pico_emc_rom(self, cmd: str):
+        return self.cmd_send_recv(f'picoemcrom {cmd}')
+
+    def pico_emc_rom_enter(self):
+        return self._pico_emc_rom('enter')
+
+    def pico_emc_rom_exit(self):
+        return self._pico_emc_rom('exit')
+
+    def pico_chip_const(self, version):
+        return self.cmd_send_recv(f'picochipconst {version}')
+
+    def pico_set_chip_salina(self):
+        return self.pico_chip_const('salina')
+
+    def pico_set_chip_salina2(self):
+        return self.pico_chip_const('salina2')
+
+    def pico_fw_const(self, version: str, buf_addr: int, sc: bytes):
+        version = version.replace(' ', '.')
+        return self.cmd_send_recv(f'picofwconst {version} {buf_addr:x} {sc.hex()}')
+
+    def pico_fw_const_test(self, buf_addr: int):
+        #buf_addr = 0x19261c
+        #buf_addr = 0x165AE8
+        sc = load_bin('emc_shellcode')
+        return self.pico_fw_const('E1E 0001 0008 0002 1B03', buf_addr, sc)
+
+    def try_unlock(self):
+        while True:
+            frames = self.unlock()
+            rv = frames[0]
+            if rv.is_ok():
+                return
+            self.wait_frame(ResultType.kInfo, timeout=5)
 
 def parse_hexdump(path: Path):
     data = []
@@ -762,6 +978,31 @@ def read_irq_timestamps(efc):
     efc.read_mem(0x9088F0, 0x10 // 4, 4)
 
 
+def test_rom0():
+    efc = Efc()
+    cpu0_rom_ctrl = 0x10115000 + 0x10
+    ctrl = 0x01500000
+    # (1 << 13) # error status reset. clears bit 9 once set. if ecc_enable[15]==1.
+    # ctrl |= 1 << 14 # test data select. takes 38bit input from regs
+    ctrl |= 1 << 15  # ecc enable. doesn't seem to have effect. reg+8 is somehow input. can't use test data input?
+    # ctrl |= 1 << 31 # powerdown enable
+    efc.mem_write32(cpu0_rom_ctrl, ctrl)
+    efc.mem_write32(cpu0_rom_ctrl, ctrl | (1 << 13))
+    efc.mem_write32(cpu0_rom_ctrl, ctrl)
+    efc.mem_write32(cpu0_rom_ctrl + 4, 0)
+    efc.mem_write32(
+        cpu0_rom_ctrl + 8, 0
+    )  # no effect on status bits when using test data input(?). bit 31 is write-only, read as 0.
+    efc.read_mem(cpu0_rom_ctrl, 3, 4)
+
+    for i in range(0x10):
+        efc.mem_write32(cpu0_rom_ctrl + 4, i)
+        efc.mem_write32(cpu0_rom_ctrl + 8, (1 << 31) | i)
+        efc.read_mem(cpu0_rom_ctrl, 3, 4)
+        efc.mem_write32(cpu0_rom_ctrl, ctrl | (1 << 13))
+        efc.mem_write32(cpu0_rom_ctrl, ctrl | i)
+
+
 # efc.mem_write32(0x10112090, 0xffffffe8 &~ (1<<24))
 # will cause ipc timeout -> crash (stopping some cpu clock)
 
@@ -787,8 +1028,43 @@ class UartContext:
         self.ctx.port.close()
 
 
+def test_bcm_shit():
+    with UcmdContext() as emc:
+        emc.screset()
+        emc.load_eap()
+        with UartContext() as eap:
+            for i in trange(0x100, desc="bruting"):
+                rv = eap.bcm_rsapss_sign_prepare(0xC0, 0, (i).to_bytes(3, "big"))
+                # print(f'{i:8x} {rv}')
+                if rv != 288:
+                    print(f"got {rv} @ {i}")
+                    exit()
+                eap.reinstall_hax()
+                emc.fc_reset_set(True)
+                emc.fc_reset_set(False)
+                while True:
+                    try:
+                        if eap.ping():
+                            break
+                    except:
+                        pass
+
+
+def test_efc():
+    emc = Ucmd()
+    emc.screset()
+    emc.unlock()
+    assert emc.unlock_efc(True)
+    import time
+    time.sleep(3) # tmp to avoid other cpus complaining
+    import uart_client
+    efc = uart_client.Client("COM19", 230400*2)
+    code.InteractiveConsole(locals=dict(globals(), **locals())).interact("Entering shell...")
+
 if __name__ == "__main__":
+    # test_bcm_shit()
     console()
+    #test_efc()
     exit()
     efc = Efc()
     for i in range(0x10):

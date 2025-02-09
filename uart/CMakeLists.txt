@@ -16,17 +16,13 @@ if(NOT EXISTS ${PICO_SDK_PATH})
 endif()
 include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
 
-set(PICO_BOARD "pico_w")
+set(PICO_BOARD "pico")
 
 project(uart C CXX ASM)
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED TRUE)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
-
-if(NOT ${CMAKE_CXX_COMPILER_ID} STREQUAL GNU)
-    message(FATAL_ERROR "non-gcc is known to have problems (probably because of a bug in this project...).")
-endif()
 
 # Initialize the SDK
 pico_sdk_init()
@@ -43,11 +39,6 @@ target_include_directories(uart PRIVATE
 
 target_sources(uart PRIVATE
     ps5_uart.cpp
-    )
-
-target_compile_definitions(uart PRIVATE
-    # PICO_NO_BINARY_INFO=0 (default) causes compiler warnings/errors with gcc 13
-    PICO_NO_BINARY_INFO=1
     )
 
 target_compile_options(uart PRIVATE

@@ -31,16 +31,40 @@ static inline u32 arm_cpsr_read() {
   return cpsr;
 }
 
-static inline u32 arm_dfsr_read() {
-  u32 val;
-  asm volatile("mrc p15, 0, %0, c5, c0, 0" : "=r"(val));
-  return val;
+struct ArmSR {
+  u32 coproc{};
+  u32 op1{};
+  u32 crn{};
+  u32 crm{};
+  u32 op2{};
+};
+
+constexpr ArmSR DBGDRAR{14, 0, 1, 0, 0};
+constexpr ArmSR DBGDSAR{14, 0, 2, 0, 0};
+constexpr ArmSR DBGPRCR{14, 0, 1, 4, 4};
+constexpr ArmSR MIDR{15, 0, 0, 0, 0};
+constexpr ArmSR SCTLR{15, 0, 1, 0, 0};
+constexpr ArmSR ACTLR{15, 0, 1, 0, 1};
+constexpr ArmSR VBAR{15, 0, 12, 0, 0};
+constexpr ArmSR DFSR{15, 0, 5, 0, 0};
+constexpr ArmSR DFAR{15, 0, 6, 0, 0};
+
+constexpr inline void arm_dsb() {
+  asm volatile("dsb" ::: "memory");
 }
 
-static inline u32 arm_dfar_read() {
-  u32 val;
-  asm volatile("mrc p15, 0, %0, c6, c0, 0" : "=r"(val));
-  return val;
+constexpr inline void arm_isb() {
+  asm volatile("isb" ::: "memory");
+}
+
+constexpr inline u32 arm_rsr(const ArmSR& sr) {
+  return __arm_mrc(sr.coproc, sr.op1, sr.crn, sr.crm, sr.op2);
+}
+
+constexpr inline void arm_wsr(const ArmSR& sr, u32 value) {
+  __arm_mcr(sr.coproc, sr.op1, value, sr.crn, sr.crm, sr.op2);
+  arm_dsb();
+  arm_isb();
 }
 
 struct DAbortRecord {
@@ -152,6 +176,65 @@ struct Uart {
   Regs* regs_{};
 };
 
+struct BcmMbox {
+  // write-only
+  // arg 14: linked-list dma host-read  pointer
+  // arg 15: linked-list dma host-write pointer
+  vu32 args[16];
+  vu32 cmd;
+  vu32 reserved[60 / 4];
+  // read-only
+  vu32 return_status;
+  vu32 status[16];
+  vu32 fifo_status;
+  // write-to-clear
+  vu32 host_intp_reg;
+  vu32 host_intp_mask;
+  vu32 host_exct_addr;
+  // read-only
+  vu32 sp_trust_reg;
+  vu32 wtm_id;
+  vu32 wtm_revision;
+};
+
+struct Bcm {
+  u32 send_cmd(u32 cmd, u32 timeout = 10000) {
+    mbox.cmd = cmd;
+    if (!wait(timeout)) {
+      return UINT32_MAX;
+    }
+    return mbox.return_status;
+  }
+  bool wait(u32 timeout) {
+    u32 retries = 0;
+    while ((mbox.host_intp_reg & 1) == 0) {
+      if (retries++ >= timeout) {
+        return false;
+      }
+    }
+    // try to ack everything
+    mbox.host_intp_reg = 0xffffffff;
+    return true;
+  }
+  void aes_process(u8* buf_in, u8* buf_out, u32 len, u32 flag, u32 flag2) {
+    mbox.args[0] = (u32)buf_in;
+    mbox.args[1] = (u32)buf_out;
+    mbox.args[2] = len;
+    // 0: use previous context, 1: new ctx
+    mbox.args[3] = flag;
+    mbox.args[4] = 0;
+    mbox.args[5] = 0;
+    mbox.args[6] = 0x10000000;  // ?
+    mbox.args[7] = 0;
+    mbox.args[8] = flag2;  // ?
+    // hmmm (dma linked list)
+    mbox.args[14] = 0;
+    mbox.args[15] = 0;
+    send_cmd(14);
+  }
+  BcmMbox& mbox{*(BcmMbox*)0x19000000};
+};
+
 struct UartServer {
   bool ping() {
     u32 val;
@@ -216,12 +299,13 @@ struct UartServer {
     return ok;
   }
   enum CpReg : u8 {
-    kMIDR,
     kDBGDRAR,
     kDBGDSAR,
-    kVBAR,
     kDBGPRCR,
+    kMIDR,
     kSCTLR,
+    kACTLR,
+    kVBAR,
     kCPSR,
   };
   bool reg_read() {
@@ -231,30 +315,24 @@ struct UartServer {
     }
     u32 val{};
     switch (reg) {
-    case kMIDR:
-      val = __arm_mrc(15, 0, 0, 0, 0);
-      break;
-    case kVBAR:
-      val = __arm_mrc(15, 0, 12, 0, 0);
-      break;
-    case kDBGDRAR:
-      val = __arm_mrc(14, 0, 1, 0, 0);
-      break;
-    case kDBGDSAR:
-      val = __arm_mrc(14, 0, 2, 0, 0);
-      break;
-    case kDBGPRCR:
-      val = __arm_mrc(14, 0, 1, 4, 4);
-      break;
-    case kSCTLR:
-      val = __arm_mrc(15, 0, 1, 0, 0);
-      break;
+#define SR_READ(name)    \
+  case k##name:          \
+    val = arm_rsr(name); \
+    break;
+      SR_READ(DBGDRAR);
+      SR_READ(DBGDSAR);
+      SR_READ(DBGPRCR);
+      SR_READ(MIDR);
+      SR_READ(SCTLR);
+      SR_READ(ACTLR);
+      SR_READ(VBAR);
     case kCPSR:
       val = arm_cpsr_read();
       break;
     default:
       val = 0xcacacaca;
       break;
+#undef SR_READ
     }
     uart_.write(val);
     return true;
@@ -271,17 +349,17 @@ struct UartServer {
       return false;
     }
     switch (reg) {
-    case kVBAR:
-      __arm_mcr(15, 0, val, 12, 0, 0);
-      break;
-    case kDBGPRCR:
-      __arm_mcr(14, 0, val, 1, 4, 4);
-      break;
-    case kSCTLR:
-      __arm_mcr(15, 0, val, 1, 0, 0);
-      break;
+#define SR_WRITE(name)  \
+  case k##name:         \
+    arm_wsr(name, val); \
+    break;
+      SR_WRITE(DBGPRCR);
+      SR_WRITE(SCTLR);
+      SR_WRITE(ACTLR);
+      SR_WRITE(VBAR);
     default:
       return false;
+#undef SR_WRITE
     }
     return true;
   }
@@ -344,8 +422,8 @@ void exception_reset() {}
 }
 [[gnu::interrupt("ABORT")]] void exception_dabort() {
   g_abort_status = {
-      .addr = arm_dfar_read(),
-      .status = arm_dfsr_read(),
+      .addr = arm_rsr(DFAR),
+      .status = arm_rsr(DFSR),
   };
 }
 [[gnu::interrupt("IRQ")]] void exception_irq() {
@@ -394,8 +472,6 @@ void install_exception_handlers_efc() {
       // abort
       "mov      %0, MASK_AIF | MODE_ABORT\n"
       "msr      cpsr_c, %0\n"
-      //"mrs      %0, sp_svc\n"
-      //"add      sp, %0, 0x100\n"
       "add      sp, %1, 0x1100\n"
       // svc
       "mov      %0, MASK_AIF | MODE_SVC\n"
